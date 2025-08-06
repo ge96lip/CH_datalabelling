@@ -1,0 +1,4 @@
+type,text
+oncology_note,Long-term remission confirmed.
+radiology_report,PET scan indicates no uptake above baseline.
+demographics,"Age: 69, Sex: Female"

@@ -1,0 +1,4 @@
+type,text
+oncology_note,Patient presents with a growing mass near the prior surgical margin.
+radiology_report,PET scan reveals increased uptake suggestive of active disease.
+demographics,"Age: 72, Sex: Male"

@@ -1,0 +1,4 @@
+type,text
+oncology_note,"No abnormalities detected, patient continues remission."
+radiology_report,"MRI unremarkable, matches previous clean scan."
+demographics,"Age: 71, Sex: Female"

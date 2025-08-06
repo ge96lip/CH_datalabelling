@@ -1,0 +1,4 @@
+type,text
+oncology_note,"Patient stable, no signs of recurrence on examination."
+radiology_report,"CT scan shows stable post-treatment changes, no new findings."
+demographics,"Age: 60, Sex: Female"

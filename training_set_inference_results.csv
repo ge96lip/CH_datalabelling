@@ -1,0 +1,13 @@
+text,label,recurrence_logit,true_label
+"Clinical signs indicate possible local recurrence in the lung apex. CT confirms small new nodule adjacent to old lesion site. Age: 65, Sex: Female",1,0.19393976,1.0
+"Patient shows a new nodule in the left lung suggestive of recurrence. CT imaging confirms new lesion consistent with cancer recurrence. Age: 65, Sex: Female",1,0.27100042,1.0
+"Patient reports improved stamina; no recurrence noted. CT shows lung fields are clear and unchanged. Age: 63, Sex: Male",0,-0.27492687,0.0
+"Interval progression noted with multiple new pulmonary metastases. Multiple lung nodules increased in size, indicative of recurrent disease. Age: 72, Sex: Male",1,0.27624786,1.0
+"Patient stable, no signs of recurrence on examination. CT scan shows stable post-treatment changes, no new findings. Age: 60, Sex: Female",0,-0.47440708,0.0
+"Stable disease, no signs of recurrence. No new lesions or nodules observed; stable pulmonary condition. Age: 58, Sex: Female",0,-0.4370147,0.0
+"No progression, patient remains disease-free. Stable scan, previous lesions resolved, no recurrence detected. Age: 60, Sex: Male",0,-0.47986683,0.0
+"Long-term remission confirmed. PET scan indicates no uptake above baseline. Age: 69, Sex: Female",0,-0.29949248,0.0
+"Routine follow-up, no concerning features identified. Clear imaging with no new abnormalities. Age: 67, Sex: Male",0,-0.37659732,0.0
+"Routine checkup; patient asymptomatic. No evidence of recurrence or metastasis. Age: 67, Sex: Male",0,-0.48906884,0.0
+"Biopsy confirmed recurrent adenocarcinoma. Nodule in right upper lobe shows increased metabolic activity. Age: 68, Sex: Female",1,0.10432483,1.0
+"Cough has returned; may indicate disease progression. MRI shows lesion growth in previously treated region. Age: 70, Sex: Male",1,0.29345042,1.0

@@ -1,0 +1,4 @@
+type,text
+oncology_note,Cough has returned; may indicate disease progression.
+radiology_report,MRI shows lesion growth in previously treated region.
+demographics,"Age: 70, Sex: Male"

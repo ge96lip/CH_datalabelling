@@ -1,0 +1,4 @@
+type,text
+oncology_note,Routine checkup; patient asymptomatic.
+radiology_report,No evidence of recurrence or metastasis.
+demographics,"Age: 67, Sex: Male"
