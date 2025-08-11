@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 
 from transformers import AutoTokenizer, get_scheduler
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve, accuracy_score, balanced_accuracy_score, f1_score
 
 # local
 from model import RecurrenceModel, LabeledDataset, InferenceDataset
@@ -63,6 +63,16 @@ def get_device(prefer: str = "auto") -> torch.device:
 
 
 def _read_mrn_list(path):
+    """
+    Reads a list of MRNs from a file, filters out comments and empty lines,
+    removes trailing '.0' from numeric MRNs, and returns a list of unique MRNs.
+
+    Args:
+        path (str): The file path to read MRNs from.
+
+    Returns:
+        list: A list of unique, cleaned MRNs as strings.
+    """
     if not os.path.exists(path):
         return []
     with open(path, "r", encoding="utf-8") as f:
@@ -73,6 +83,16 @@ def _read_mrn_list(path):
 
 
 def load_patient_text(mrn, patient_dir=PATIENT_DIR):
+    """
+    Loads and returns the text data for a patient given their medical record number (MRN).
+
+    Args:
+        mrn (str): The medical record number of the patient.
+        patient_dir (str, optional): The directory containing patient text files. Defaults to PATIENT_DIR.
+
+    Returns:
+        str or None: The contents of the patient's text file as a string, or None if the file does not exist.
+    """
     path = os.path.join(patient_dir, f"{mrn}.txt")
     if not os.path.exists(path):
         return None
@@ -80,12 +100,43 @@ def load_patient_text(mrn, patient_dir=PATIENT_DIR):
         return f.read().strip()
 
 
-def create_df(
-    path_recurrence=REC_FILE,
+def create_df(path_recurrence=REC_FILE,
     path_no_recurrence=NONREC_FILE,
     path_maybe=MAYBE_FILE,
     patient_dir=PATIENT_DIR
-):
+    ):
+    """
+    Constructs a pandas DataFrame containing patient MRNs, associated text data, and recurrence labels.
+
+    This function reads lists of patient MRNs from specified files for recurrence, non-recurrence, and uncertain cases ("maybe").
+    It excludes MRNs present in the "maybe" list from both recurrence and non-recurrence lists, and removes any overlap between recurrence and non-recurrence lists.
+    For each MRN, it loads the corresponding patient text data from the given directory. Only MRNs with available text data are included in the resulting DataFrame.
+
+    Parameters
+    ----------
+    path_recurrence : str, optional
+        Path to the file containing MRNs with recurrence (default: REC_FILE).
+    path_no_recurrence : str, optional
+        Path to the file containing MRNs without recurrence (default: NONREC_FILE).
+    path_maybe : str, optional
+        Path to the file containing MRNs with uncertain recurrence status (default: MAYBE_FILE).
+    patient_dir : str, optional
+        Directory containing patient text files (default: PATIENT_DIR).
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns:
+            - 'mrn': Patient MRN
+            - 'text': Patient text data
+            - 'label': Recurrence label (1 for recurrence, 0 for non-recurrence)
+
+    Warns
+    -----
+    Prints warnings if MRNs are present in both recurrence and non-recurrence lists, or if text data is missing for any MRN.
+
+    """
+    
     rec_ids    = _read_mrn_list(path_recurrence)
     nonrec_ids = _read_mrn_list(path_no_recurrence)
     maybe_ids  = set(_read_mrn_list(path_maybe))
@@ -130,6 +181,22 @@ def check_tokenization(train_df):
 
 
 def build_model(load_checkpoint: bool = True) -> RecurrenceModel:
+    """
+    Builds and returns a RecurrenceModel instance, optionally loading weights from a checkpoint.
+
+    If `load_checkpoint` is True and a checkpoint exists at `CHECKPOINT_PATH`, loads the model weights
+    from the checkpoint, excluding weights for the 'recurrence_head'. Otherwise, initializes the model
+    with default weights.
+
+    After loading weights, freezes all model parameters except for those in the recurrence head and the
+    last two encoder layers of the Longformer backbone, which are unfrozen for fine-tuning.
+
+    Args:
+        load_checkpoint (bool, optional): Whether to load weights from a checkpoint. Defaults to True.
+
+    Returns:
+        RecurrenceModel: The initialized and partially unfrozen model ready for training.
+    """
     model = RecurrenceModel()
     if load_checkpoint and os.path.exists(CHECKPOINT_PATH):
         ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu")
@@ -190,6 +257,22 @@ def make_dataloaders(train_df, val_df, cfg: TrainConfig):
 
 
 def compute_class_pos_weight(df):
+    """
+    Computes the positive class weight for imbalanced binary classification.
+
+    This function calculates the ratio of negative to positive samples in the provided DataFrame,
+    which can be used as the `pos_weight` parameter in loss functions such as `torch.nn.BCEWithLogitsLoss`
+    to address class imbalance.
+
+    Args:
+        df (pandas.DataFrame): DataFrame containing a 'label' column with binary values (0 for negative, 1 for positive).
+
+    Returns:
+        torch.Tensor: A scalar tensor representing the positive class weight. If one class is empty, returns 1.0.
+
+    Warns:
+        Prints a warning if either the positive or negative class is empty.
+    """
     n_pos = int(df["label"].sum())
     n_neg = int((df["label"] == 0).sum())
     if n_pos == 0 or n_neg == 0:
@@ -201,37 +284,46 @@ def compute_class_pos_weight(df):
 def epoch_eval(model, loader, device, loss_fn, desc="val", amp=False):
     model.eval()
     losses, all_logits, all_y = [], [], []
-    autocast_enabled = (amp and (device.type in ["cuda", "mps"]))
+    use_amp = (amp and (device.type in ["cuda", "mps"]))
     with torch.no_grad():
         for batch in tqdm(loader, desc=desc, leave=False):
             input_ids = batch[0].to(device)
             attn_mask = batch[1].to(device)
             y_true    = batch[2].to(device).float()
-
-            with torch.cuda.amp.autocast(enabled=autocast_enabled):
+            with torch.cuda.amp.autocast(enabled=use_amp):
                 outputs = model(input_ids, attn_mask)
                 logits  = get_logits_from_outputs(outputs)
                 loss    = loss_fn(logits, y_true)
-
             losses.append(loss.item())
             all_logits.append(logits.detach().cpu())
             all_y.append(y_true.detach().cpu())
 
-    logits = torch.cat(all_logits).numpy() if all_logits else np.array([])
-    y_true = torch.cat(all_y).numpy() if all_y else np.array([])
+    if not all_logits:
+        return np.nan, np.nan, np.nan, {"thr@bestJ":np.nan,"acc@bestJ":np.nan,"bal_acc@bestJ":np.nan}
 
-    if logits.size > 0:
-        probs = 1.0 / (1.0 + np.exp(-logits))
-        preds = (probs >= 0.5).astype(int)
-        acc   = accuracy_score(y_true, preds)
-        try:
-            auc = roc_auc_score(y_true, probs)
-        except Exception:
-            auc = np.nan
-    else:
-        acc, auc = np.nan, np.nan
+    logits = torch.cat(all_logits).numpy()
+    y_true = torch.cat(all_y).numpy()
+    probs  = 1.0 / (1.0 + np.exp(-logits))
 
-    return float(np.mean(losses)) if losses else np.nan, acc, auc
+    # Accuracy at fixed 0.5 (current behavior)
+    acc_05 = accuracy_score(y_true, (probs >= 0.5).astype(int))
+
+    # Threshold by Youden’s J (maximizes sensitivity+specificity-1)
+    fpr, tpr, thr = roc_curve(y_true, probs)
+    J = tpr - fpr
+    j_idx = int(np.argmax(J))
+    thr_bestJ = float(thr[j_idx]) if j_idx < len(thr) else 0.5
+    preds_J   = (probs >= thr_bestJ).astype(int)
+    acc_J     = accuracy_score(y_true, preds_J)
+    balacc_J  = balanced_accuracy_score(y_true, preds_J)
+
+    try:
+        auc = roc_auc_score(y_true, probs)
+    except Exception:
+        auc = np.nan
+
+    extra = {"thr@bestJ": thr_bestJ, "acc@bestJ": float(acc_J), "bal_acc@bestJ": float(balacc_J), "acc@0.5": float(acc_05)}
+    return float(np.mean(losses)), float(acc_05), float(auc), extra
 
 
 def train(model, train_df, val_df, cfg: TrainConfig):
@@ -260,10 +352,14 @@ def train(model, train_df, val_df, cfg: TrainConfig):
     scaler = torch.cuda.amp.GradScaler(enabled=(cfg.amp and device.type == "cuda"))
 
     # log headers
-    metrics_df = pd.DataFrame(columns=["epoch","train_loss","val_loss","val_acc","val_auc","lr"])
+    metrics_df = pd.DataFrame(columns=[
+        "epoch","train_loss","val_loss","val_acc_0p5","val_auc",
+        "val_acc_bestJ","val_balacc_bestJ","val_thr_bestJ","lr"
+    ])
     metrics_df.to_csv(metrics_path, index=False)
 
-    best_val_loss = float("inf")
+    best_val_loss = -1.0
+    best_val_score = -1.0
 
     for epoch in range(1, cfg.epochs + 1):
         # ---- Train ----
@@ -311,23 +407,39 @@ def train(model, train_df, val_df, cfg: TrainConfig):
         train_loss = float(np.mean(train_losses)) if train_losses else np.nan
 
         # ---- Validate ----
-        val_loss, val_acc, val_auc = epoch_eval(
-            model, val_loader, device, loss_fn, desc="val", amp=cfg.amp
-        )
+        val_loss, val_acc_05, val_auc, extra = epoch_eval(model, val_loader, device, loss_fn, desc="val", amp=cfg.amp)
 
-        # ---- Log/save ----
-        row = {"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss,
-               "val_acc": val_acc, "val_auc": val_auc, "lr": scheduler.get_last_lr()[0]}
-        print(f"\nEpoch {epoch} → train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc:.4f} | val_auc={val_auc:.4f}")
+        row = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "val_acc_0p5": val_acc_05,
+            "val_auc": val_auc,
+            "val_acc_bestJ": extra["acc@bestJ"],
+            "val_balacc_bestJ": extra["bal_acc@bestJ"],
+            "val_thr_bestJ": extra["thr@bestJ"],
+            "lr": scheduler.get_last_lr()[0],
+        }
+        pd.DataFrame([row]).to_csv(metrics_path, mode="a", header=False, index=False)
+
+        # (Optional) select best checkpoint by balanced accuracy at bestJ
+        score_for_selection = extra["bal_acc@bestJ"]
+        if cfg.save_best and score_for_selection > best_val_score:
+            best_val_score = score_for_selection
+            torch.save(model.state_dict(), best_path)
+            # also persist the threshold alongside the checkpoint
+            with open(os.path.join(cfg.out_dir, "best_threshold.json"), "w") as f:
+                json.dump({"threshold": extra["thr@bestJ"], "epoch": epoch}, f)
+        print(f"\nEpoch {epoch} → train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc_05:.4f} | val_auc={val_auc:.4f}")
 
         # append to CSV
         pd.DataFrame([row]).to_csv(metrics_path, mode="a", header=False, index=False)
 
         # save best
-        if cfg.save_best and val_loss < best_val_loss:
+        """if cfg.save_best and val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_path)
-            print(f"[✓] Saved new best to {best_path}")
+            print(f"[✓] Saved new best to {best_path}")"""
 
     # save last
     torch.save(model.state_dict(), last_path)
@@ -368,6 +480,15 @@ def run_inference(model_path: str, df, device_pref="auto", out_csv="training_set
                         pin_memory=True if torch.cuda.is_available() else False)
 
     logits_all, labels_all = [], []
+    thr = 0.5
+    thr_path = os.path.join(os.path.dirname(model_path), "best_threshold.json")
+    if os.path.exists(thr_path):
+        try:
+            thr = float(json.load(open(thr_path))["threshold"])
+            print(f"[i] Using saved decision threshold: {thr:.3f}")
+        except Exception:
+            pass
+        
     with torch.no_grad():
         for batch in tqdm(loader, desc="inference"):
             input_ids, attn_mask, labels = [x.to(device) for x in batch]
@@ -381,7 +502,7 @@ def run_inference(model_path: str, df, device_pref="auto", out_csv="training_set
     out_df["true_label"] = labels_all
     out_df.to_csv(out_csv, index=False)
     probs = 1 / (1 + np.exp(-np.array(logits_all)))
-    preds = (probs >= 0.5).astype(int)
+    preds = (probs >= thr).astype(int)
     acc   = accuracy_score(labels_all, preds)
     try:
         auc = roc_auc_score(labels_all, probs)
