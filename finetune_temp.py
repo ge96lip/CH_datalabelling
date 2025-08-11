@@ -21,6 +21,7 @@ from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve, ac
 
 # local
 from model import RecurrenceModel, LabeledDataset, InferenceDataset
+import model
 
 # ---------- ENV/SETUP ----------
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -31,7 +32,7 @@ REC_FILE    = "./data/labels/recurrence.txt"
 NONREC_FILE = "./data/labels/non_recurrence.txt"
 MAYBE_FILE  = "./data/labels/maybe_recurrence.txt"   # (optional) excluded
 
-CHECKPOINT_PATH = "/Users/carlotta/physionet.org/files/dfci-cancer-outcomes-ehr/1.0.0/models/DFCI-student-medonc/dfci-student-medonc.pt"
+CHECKPOINT_PATH = "Z:\CarlottaHoelzle\Task1\CH_datalabelling\models\dfci-student-medonc.pt"
 
 
 # ---------- UTILS ----------
@@ -180,7 +181,7 @@ def check_tokenization(train_df):
     print(tok.convert_ids_to_tokens(enc['input_ids'][0][:20]))
 
 
-def build_model(load_checkpoint: bool = True) -> RecurrenceModel:
+def build_model(load_checkpoint: bool = True, target_head: str = "recurrence") -> RecurrenceModel:
     """
     Builds and returns a RecurrenceModel instance, optionally loading weights from a checkpoint.
 
@@ -201,19 +202,37 @@ def build_model(load_checkpoint: bool = True) -> RecurrenceModel:
     if load_checkpoint and os.path.exists(CHECKPOINT_PATH):
         ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu")
         model_dict = model.state_dict()
-        pretrained = {k: v for k, v in ckpt.items() if k in model_dict and 'recurrence_head' not in k}
+        if target_head == "recurrence":
+            # exclude recurrence_head only
+            pretrained = {k: v for k, v in ckpt.items() if k in model_dict and 'recurrence_head' not in k}
+        else:  # progression
+            # include everything that matches (keep progression_head from ckpt)
+            pretrained = {k: v for k, v in ckpt.items() if k in model_dict}
         model_dict.update(pretrained)
-        model.load_state_dict(model_dict)
-        print(f"Loaded base weights from {CHECKPOINT_PATH} (excluding recurrence_head).")
+        model.load_state_dict(model_dict, strict=False)
+        print(f"Loaded base weights from {CHECKPOINT_PATH} (target_head={target_head}).")
+        trainable = [n for n,p in model.named_parameters() if p.requires_grad]
+        print("Trainable params:", len(trainable), trainable[:10])
     else:
         print("[INFO] No base checkpoint loaded.")
 
-    # Freeze all, then unfreeze recurrence head + last 2 encoder layers
-    for p in model.parameters(): p.requires_grad = False
-    for p in model.recurrence_head.parameters(): p.requires_grad = True
+    # Freeze all
+    for p in model.parameters():
+        p.requires_grad = False
+
+    # Unfreeze selected head
+    if target_head == "recurrence":
+        for p in model.recurrence_head.parameters():
+            p.requires_grad = True
+    else:
+        for p in model.progression_head.parameters():
+            p.requires_grad = True
+
+    # Unfreeze last 2 encoder layers
     for name, p in model.longformer.named_parameters():
         if "encoder.layer.10." in name or "encoder.layer.11." in name:
             p.requires_grad = True
+
     return model
 
 
@@ -234,12 +253,10 @@ class TrainConfig:
     device_pref: str = "auto"  # "auto" | "cuda" | "cuda:0" | "mps" | "cpu"
 
 
-def get_logits_from_outputs(model_outputs):
-    """
-    Adjust this if your RecurrenceModel returns logits differently.
-    Current code expects outputs[3] to be the recurrence logits.
-    """
-    return model_outputs[3].squeeze(1)  # shape: (B,)
+def get_logits_from_outputs(model_outputs, target_head: str = "recurrence"):
+    # outputs: (any_cancer, response, progression, recurrence)
+    idx = 3 if target_head == "recurrence" else 2
+    return model_outputs[idx].squeeze(1)
 
 
 def make_dataloaders(train_df, val_df, cfg: TrainConfig):
@@ -281,7 +298,7 @@ def compute_class_pos_weight(df):
     return torch.tensor(n_neg / max(1, n_pos), dtype=torch.float32)
 
 
-def epoch_eval(model, loader, device, loss_fn, desc="val", amp=False):
+def epoch_eval(model, loader, device, loss_fn, desc="val", amp=False, target_head="recurrence"):
     model.eval()
     losses, all_logits, all_y = [], [], []
     use_amp = (amp and (device.type in ["cuda", "mps"]))
@@ -292,7 +309,7 @@ def epoch_eval(model, loader, device, loss_fn, desc="val", amp=False):
             y_true    = batch[2].to(device).float()
             with torch.cuda.amp.autocast(enabled=use_amp):
                 outputs = model(input_ids, attn_mask)
-                logits  = get_logits_from_outputs(outputs)
+                logits  = get_logits_from_outputs(outputs, target_head=target_head)
                 loss    = loss_fn(logits, y_true)
             losses.append(loss.item())
             all_logits.append(logits.detach().cpu())
@@ -326,11 +343,12 @@ def epoch_eval(model, loader, device, loss_fn, desc="val", amp=False):
     return float(np.mean(losses)), float(acc_05), float(auc), extra
 
 
-def train(model, train_df, val_df, cfg: TrainConfig):
+def train(model, train_df, val_df, cfg: TrainConfig, target_head: str = "recurrence"):
     os.makedirs(cfg.out_dir, exist_ok=True)
-    metrics_path = os.path.join(cfg.out_dir, "metrics.csv")
-    best_path    = os.path.join(cfg.out_dir, "recurrence_model_best.pt")
-    last_path    = os.path.join(cfg.out_dir, "recurrence_model_last.pt")
+    metrics_path = os.path.join(cfg.out_dir, f"metrics_{target_head}.csv")
+    best_path    = os.path.join(cfg.out_dir, f"{target_head}_model_best.pt")
+    last_path    = os.path.join(cfg.out_dir, f"{target_head}_model_last.pt")
+    thr_path     = os.path.join(cfg.out_dir, f"{target_head}_best_threshold.json")
 
     device = get_device(cfg.device_pref)
     print(f"Using device: {device}")
@@ -339,10 +357,22 @@ def train(model, train_df, val_df, cfg: TrainConfig):
     train_loader, val_loader = make_dataloaders(train_df, val_df, cfg)
 
     # class imbalance handling
-    pos_weight = compute_class_pos_weight(train_df).to(device)
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    # pos_weight = compute_class_pos_weight(train_df).to(device)
+    n_pos = int(train_df["label"].sum()); n_total = len(train_df)
+    print(f"[stats] pos={n_pos}/{n_total} ({n_pos/n_total:.2%})")
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=compute_class_pos_weight(train_df).to(device)) if (n_pos/n_total) < 0.4 else nn.BCEWithLogitsLoss()
 
     # optimizer / scheduler
+    head_params = (model.recurrence_head if target_head=="recurrence" else model.progression_head).parameters()
+    encoder_params = (p for n,p in model.named_parameters() if p.requires_grad and "head" not in n)
+    
+    """head_lr = 1e-4    # faster head
+    enc_lr  = 1e-5    # gentle encoder
+    optimizer = AdamW([
+    {"params": model.recurrence_head.parameters(), "lr": head_lr},
+    {"params": (p for n,p in model.named_parameters()
+                if p.requires_grad and "recurrence_head" not in n), "lr": enc_lr}
+    ], weight_decay=cfg.weight_decay)"""
     optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()),
                       lr=cfg.lr, weight_decay=cfg.weight_decay)
     total_steps = cfg.epochs * math.ceil(len(train_loader) / max(1, cfg.grad_accum_steps))
@@ -358,8 +388,8 @@ def train(model, train_df, val_df, cfg: TrainConfig):
     ])
     metrics_df.to_csv(metrics_path, index=False)
 
-    best_val_loss = -1.0
     best_val_score = -1.0
+    best_val_loss = -1.0
 
     for epoch in range(1, cfg.epochs + 1):
         # ---- Train ----
@@ -378,7 +408,7 @@ def train(model, train_df, val_df, cfg: TrainConfig):
 
             with torch.cuda.amp.autocast(enabled=autocast_enabled):
                 outputs = model(input_ids, attn_mask)
-                logits  = get_logits_from_outputs(outputs)
+                logits  = get_logits_from_outputs(outputs, target_head=target_head)
                 loss    = loss_fn(logits, y_true) / cfg.grad_accum_steps
 
             if scaler.is_enabled():
@@ -407,7 +437,7 @@ def train(model, train_df, val_df, cfg: TrainConfig):
         train_loss = float(np.mean(train_losses)) if train_losses else np.nan
 
         # ---- Validate ----
-        val_loss, val_acc_05, val_auc, extra = epoch_eval(model, val_loader, device, loss_fn, desc="val", amp=cfg.amp)
+        val_loss, val_acc_05, val_auc, extra = epoch_eval(model, val_loader, device, loss_fn, desc="val", amp=cfg.amp, target_head=target_head)
 
         row = {
             "epoch": epoch,
@@ -420,7 +450,6 @@ def train(model, train_df, val_df, cfg: TrainConfig):
             "val_thr_bestJ": extra["thr@bestJ"],
             "lr": scheduler.get_last_lr()[0],
         }
-        pd.DataFrame([row]).to_csv(metrics_path, mode="a", header=False, index=False)
 
         # (Optional) select best checkpoint by balanced accuracy at bestJ
         score_for_selection = extra["bal_acc@bestJ"]
@@ -428,7 +457,7 @@ def train(model, train_df, val_df, cfg: TrainConfig):
             best_val_score = score_for_selection
             torch.save(model.state_dict(), best_path)
             # also persist the threshold alongside the checkpoint
-            with open(os.path.join(cfg.out_dir, "best_threshold.json"), "w") as f:
+            with open(os.path.join(cfg.out_dir, f"{target_head}best_threshold.json"), "w") as f:
                 json.dump({"threshold": extra["thr@bestJ"], "epoch": epoch}, f)
         print(f"\nEpoch {epoch} → train_loss={train_loss:.4f} | val_loss={val_loss:.4f} | val_acc={val_acc_05:.4f} | val_auc={val_auc:.4f}")
 
@@ -436,10 +465,10 @@ def train(model, train_df, val_df, cfg: TrainConfig):
         pd.DataFrame([row]).to_csv(metrics_path, mode="a", header=False, index=False)
 
         # save best
-        """if cfg.save_best and val_loss < best_val_loss:
+        if cfg.save_best and val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_path)
-            print(f"[✓] Saved new best to {best_path}")"""
+            print(f"[✓] Saved new best to {best_path}")
 
     # save last
     torch.save(model.state_dict(), last_path)
@@ -467,7 +496,7 @@ def train(model, train_df, val_df, cfg: TrainConfig):
         print(f"[WARN] Could not plot curves: {e}")
 
 
-def run_inference(model_path: str, df, device_pref="auto", out_csv="training_set_inference_results.csv"):
+def run_inference(model_path: str, df, device_pref="auto", out_csv="training_set_inference_results.csv", target_head="recurrence"):
     device = get_device(device_pref)
     model = RecurrenceModel()
     state = torch.load(model_path, map_location=device)
@@ -488,12 +517,12 @@ def run_inference(model_path: str, df, device_pref="auto", out_csv="training_set
             print(f"[i] Using saved decision threshold: {thr:.3f}")
         except Exception:
             pass
-        
+
     with torch.no_grad():
         for batch in tqdm(loader, desc="inference"):
             input_ids, attn_mask, labels = [x.to(device) for x in batch]
             outputs = model(input_ids, attn_mask)
-            logits = get_logits_from_outputs(outputs)
+            logits = get_logits_from_outputs(outputs, target_head=target_head)
             logits_all.extend(logits.detach().cpu().numpy().tolist())
             labels_all.extend(labels.detach().cpu().numpy().tolist())
 
@@ -532,6 +561,9 @@ def main():
     parser.add_argument("--no-checkpoint", dest="checkpoint", action="store_false")
     parser.set_defaults(checkpoint=True)
     parser.add_argument("--do_infer", action="store_true")
+    parser.add_argument("--target_head", type=str, default="recurrence",
+                    choices=["recurrence", "progression"],
+                    help="Which head to finetune and evaluate.")
     args = parser.parse_args()
 
     seed_everything(42)
@@ -545,7 +577,7 @@ def main():
     check_tokenization(train_df)
 
     # Model
-    model = build_model(load_checkpoint=args.checkpoint)
+    model = build_model(load_checkpoint=args.checkpoint, target_head =args.target_head)
 
     cfg = TrainConfig(
         batch_size=args.batch_size,
@@ -560,14 +592,14 @@ def main():
     )
 
     # Train
-    train(model, train_df, val_df, cfg)
+    train(model, train_df, val_df, cfg, target_head = args.target_head)
 
     # Optional inference on full training set (or swap with val_df)
     if args.do_infer:
-        best_path = os.path.join(cfg.out_dir, "recurrence_model_best.pt")
-        last_path = os.path.join(cfg.out_dir, "recurrence_model_last.pt")
+        best_path = os.path.join(cfg.out_dir, f"{args.target_head}_model_best.pt")
+        last_path = os.path.join(cfg.out_dir, f"{args.target_head}_model_last.pt")
         model_path = best_path if os.path.exists(best_path) else last_path
-        run_inference(model_path, train_df, device_pref=cfg.device_pref)
+        run_inference(model_path, train_df, device_pref=cfg.device_pref, target_head=args.target_head)
 
 
 if __name__ == "__main__":
