@@ -48,12 +48,12 @@ def iter_free_text_records(path: str, tranche: str, spec: ModalitySpec):
                 continue
 
             # streaming body
-            if line.strip() == END_TOKEN:
+            if line.strip().lower() == END_TOKEN.lower():
                 cur["raw_text"] = "".join(buf).rstrip()
                 cur["line_end"] = line_no
                 yield cur
                 # consume the mandated blank line
-                _ = next(f, None); line_no += 1
+                #_ = next(f, None); line_no += 1
                 cur = None
                 buf.clear()
             else:
