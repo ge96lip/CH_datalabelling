@@ -2,9 +2,10 @@
 # pytest -q (from project root where ehr_prep/ lives)
 import os
 from pathlib import Path
-import pyarrow.parquet as pq
 import pyarrow as pa
 import pytest
+import pyarrow.parquet as pq, glob
+
 
 from ehr_prep.normalize import normalize_tranche
 
@@ -72,6 +73,11 @@ E1|P1|MGH|M1|03/01/2018|Weight|EPIC|WT|70|kg|Dr C|CL3|MGH|Inpatient|EPIC-003
 def test_normalize_tranche_outputs_expected_structure(tranche_tmp: Path, tmp_path: Path):
     out_root = tmp_path / "ehr_store" / "normalized"
     normalize_tranche(str(tranche_tmp), str(out_root), "T01")
+    rad_parts = glob.glob((out_root / "tranche=T01" / "mod=RAD" / "*.parquet").as_posix())
+    t = pq.read_table(rad_parts[0], columns=["raw_text"])
+    print("\n--- RAD raw_text rows ---")
+    for s in t.column("raw_text").to_pylist():
+        print(repr(s))
 
     # directories per modality present
     rad_dir = out_root / "tranche=T01" / "mod=RAD"
@@ -90,6 +96,11 @@ def test_normalize_tranche_outputs_expected_structure(tranche_tmp: Path, tmp_pat
 def test_free_text_parsing_and_fields(tranche_tmp: Path, tmp_path: Path):
     out_root = tmp_path / "ehr_store" / "normalized"
     normalize_tranche(str(tranche_tmp), str(out_root), "T01")
+    rad_parts = glob.glob(os.path.join(out_root.as_posix(), "tranche=T01", "mod=RAD", "*.parquet"))
+    t = pq.read_table(rad_parts[0], columns=["raw_text"])
+    print("\n--- RAD raw_text rows from L1 ---")
+    for s in t.column("raw_text").to_pylist():
+        print(repr(s))
 
     rad_dir = out_root / "tranche=T01" / "mod=RAD"
     n_rows, table = _read_all_parquet_rows(rad_dir)
@@ -128,6 +139,11 @@ def test_free_text_parsing_and_fields(tranche_tmp: Path, tmp_path: Path):
 def test_row_based_parsing_and_fields(tranche_tmp: Path, tmp_path: Path):
     out_root = tmp_path / "ehr_store" / "normalized"
     normalize_tranche(str(tranche_tmp), str(out_root), "T01")
+    rad_parts = glob.glob(os.path.join(out_root.as_posix(), "tranche=T01", "mod=RAD", "*.parquet"))
+    t = pq.read_table(rad_parts[0], columns=["raw_text"])
+    print("\n--- RAD raw_text rows from L1 ---")
+    for s in t.column("raw_text").to_pylist():
+        print(repr(s))
 
     phy_dir = out_root / "tranche=T01" / "mod=PHY"
     n_rows, table = _read_all_parquet_rows(phy_dir)
@@ -152,6 +168,11 @@ def test_row_based_parsing_and_fields(tranche_tmp: Path, tmp_path: Path):
 def test_ignore_let_and_log_files(tranche_tmp: Path, tmp_path: Path):
     out_root = tmp_path / "ehr_store" / "normalized"
     normalize_tranche(str(tranche_tmp), str(out_root), "T01")
+    rad_parts = glob.glob(os.path.join(out_root.as_posix(), "tranche=T01", "mod=RAD", "*.parquet"))
+    t = pq.read_table(rad_parts[0], columns=["raw_text"])
+    print("\n--- RAD raw_text rows from L1 ---")
+    for s in t.column("raw_text").to_pylist():
+        print(repr(s))
 
     # ensure no output folder got created for ignored files
     forbidden = [
