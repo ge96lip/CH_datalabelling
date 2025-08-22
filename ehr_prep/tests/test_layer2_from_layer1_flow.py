@@ -123,8 +123,8 @@ def test_end_to_end_layer2_from_layer1(tranche_tmp: Path, tmp_path: Path):
     exp_e1 = "\n\n".join([
         "IMPRESSION: mild atelectasis\nFINDINGS: lungs clear; no consolidation.",
         "IMPRESSION: suspected tendinopathy\nFINDINGS: shoulder joint space preserved.",
-        "120/80",  # PHY row-based text comes from Result column via normalizer -> raw_text
-        "70",
+        "Blood Pressure 120/80 mmHg",  # PHY row-based text comes from Result column via normalizer -> raw_text
+        "Weight 70 kg",
         "IMPRESSION: improving findings\nFINDINGS: small nodules; recommend follow-up 6-12 mo.",
     ])
     assert text_e1 == exp_e1, f"E1 text mismatch.\nGot:\n{text_e1}\nExpected:\n{exp_e1}"
@@ -133,7 +133,7 @@ def test_end_to_end_layer2_from_layer1(tranche_tmp: Path, tmp_path: Path):
     # 2010-12-31 RAD, 2011-01-01 PHY, 2011-01-15 RAD
     exp_e2 = "\n\n".join([
         "IMPRESSION: baseline exam\nFINDINGS: no acute process.",
-        "75",
+        "Heart Rate 75 bpm",
         "IMPRESSION: subtle interstitial markings\nFINDINGS: likely chronic.",
     ])
     assert text_e2 == exp_e2, f"E2 text mismatch.\nGot:\n{text_e2}\nExpected:\n{exp_e2}"
@@ -185,6 +185,6 @@ def test_filters_work_on_layer2(tranche_tmp: Path, tmp_path: Path):
     exp_cutoff = "\n\n".join([
         "IMPRESSION: mild atelectasis\nFINDINGS: lungs clear; no consolidation.",
         "IMPRESSION: suspected tendinopathy\nFINDINGS: shoulder joint space preserved.",
-        "120/80",
+        "Blood Pressure 120/80 mmHg",
     ])
     assert cutoff == exp_cutoff
