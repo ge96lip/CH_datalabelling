@@ -13,7 +13,7 @@ for f in mrn_files:
     print(" -", f)
 
 # Build the lookup table
-#build_mrn_lookup(mrn_files, "ehr_store/lookups/mrn_empi_map.parquet")
+build_mrn_lookup(mrn_files, "ehr_store/lookups/mrn_empi_map.parquet")
 
 # 2 — Normalize one tranche at a time
-normalize_tranche("./raw_files/tranche_01", "ehr_store/normalized", "T01")
+normalize_tranche("./raw_files/tranche_01", "ehr_store/normalized_v2", "T01")

@@ -27,6 +27,8 @@ LAYER1_SCHEMA = pa.schema([
     ("performed_date", pa.date32()),
     ("ingest_timestamp", pa.timestamp('ms')),
     ("section_hints", pa.list_(pa.string())),
+    ("hospital", pa.string()),
+    ("inpatient_outpatient", pa.string()),
     ("modality_specific", pa.string()),  # small JSON
 ])
 
@@ -118,6 +120,7 @@ class ParquetSink:
         tbl = pa.Table.from_pylist(self._buffer, schema=LAYER1_SCHEMA)
 
         # ensure consistent logical types across parts
+        #TODO: add the hospital, is_free_text, report_end_marker, to this 
         tbl = _undictify_strings(
             tbl,
             (

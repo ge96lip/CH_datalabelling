@@ -26,15 +26,16 @@ def iter_free_text_records(path: str, tranche: str, spec: ModalitySpec):
                     "line_start": line_no,
                     "line_end": None,
                     "patient_empi": row.get("EMPI") or None,
-                    "patient_mrn": row.get("MRN") or None,
+                    # "patient_mrn": row.get("MRN") or None,
                     "modality": spec.code,
                     "doc_id": stable_id(tranche, spec.code, line_no),
-                    "report_sequence": None,
+                    "hospital": (row.get("MRN_Type") or "").strip() or None,
+                    # "report_sequence": None,
                     "is_free_text": True,
                     "raw_text": None,                # filled on close
                     "report_end_marker": True,
                     "doc_date": None,
-                    "performed_date": None,
+                    # "performed_date": None,
                     "ingest_timestamp": None,        # filled by caller
                     "section_hints": ["IMPRESSION","FINDINGS"] if spec.code=="RAD" else None,
                     "modality_specific": pack_meta_small(row, spec.keep_meta),
@@ -61,5 +62,5 @@ def iter_free_text_records(path: str, tranche: str, spec: ModalitySpec):
 
 def normalize_free_text_file(in_path: str, out_dir: str, tranche: str, spec: ModalitySpec, sink: ParquetSink):
     for rec in iter_free_text_records(in_path, tranche, spec):
-        rec["ingest_timestamp"] = None  # optional; fill in the driver if you want now()
+        # rec["ingest_timestamp"] = None  # optional; fill in the driver if you want now()
         sink.write_one(rec)

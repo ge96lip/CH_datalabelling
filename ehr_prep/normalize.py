@@ -17,6 +17,7 @@ def normalize_tranche(tranche_dir: str, out_root: str, tranche_code: str):
     tdir = Path(tranche_dir)
     failed = []
     failed_log = failed_dir_for(out_root) / f"failed-{tranche_code}-{timestamp_tag()}.txt"
+    print(f"[INFO] Normalizing tranche {tranche_code} from {tdir} to {out_root}")
     for path in tqdm(sorted(tdir.glob("*.txt")), desc=f"Normalize {tranche_code}"):
         low = path.name.lower()
         if any(low.endswith(f"_{k}.txt") for k in IGNORE_KEYS):
@@ -34,9 +35,10 @@ def normalize_tranche(tranche_dir: str, out_root: str, tranche_code: str):
         # --- resume/skip logic ---
         sig = file_signature(str(path))
         ok_path = ok_marker_path(str(out_dir), path.name)
-        ok = read_ok_marker(ok_path)
+        ok = False #read_ok_marker(ok_path)
         if ok and ok.get("sha256") == sig["sha256"] and ok.get("size") == sig["size"] and ok.get("mtime") == sig["mtime"]:
             tqdm.write(f"[SKIP ok] {spec.code} <- {path.name}; hash and size match")
+            print("continue")
             continue
 
         # --- process with a fresh sink; write to parts; then mark OK

@@ -26,8 +26,14 @@ def normalize_row_file(in_path: str, out_dir: str, tranche: str, spec: ModalityS
             raw_text = row.get("Report_Text") or _compose_row_text(row, spec.row_text_fields)
             if not raw_text and getattr(spec, "row_text_fields", ()):
                 raw_text = _compose_row_text(row, spec.row_text_fields)
+            mrn_type  = (row.get("MRN_Type") or "").strip() or None
+            hospital0 = (row.get("Hospital") or "").strip() or None
+            hospital  = hospital0 or mrn_type  # prefer explicit column, fallback to MRN_Type
 
-            sink.write_one({
+            inout = (row.get("Inpatient_Outpatient") or "").strip() or None
+
+            """
+                sink.write_one({
                 "source_tranche": tranche,
                 "source_file": in_path.split("/")[-1],
                 "line_start": i,
@@ -42,7 +48,26 @@ def normalize_row_file(in_path: str, out_dir: str, tranche: str, spec: ModalityS
                 "report_end_marker": False,
                 "doc_date": doc_date,
                 "performed_date": perf_date,
+                "hospital": hospital,                 
+                "inpatient_outpatient": inout,
                 "ingest_timestamp": None,                   # set by driver if desired
                 "section_hints": None,
+                "modality_specific": pack_meta_small(row, spec.keep_meta),
+            })"""
+            sink.write_one({
+                "source_tranche": tranche,
+                "source_file": in_path.split("/")[-1],
+                "line_start": i,
+                "line_end": i,
+                "patient_empi": row.get("EMPI") or None,
+                "modality": spec.code,
+                "doc_id": stable_id(tranche, spec.code, i),
+                "is_free_text": False,
+                "raw_text": raw_text or "",
+                "report_end_marker": False,
+                "doc_date": doc_date,
+                "performed_date": perf_date,
+                "hospital": hospital,                 
+                "inpatient_outpatient": inout,
                 "modality_specific": pack_meta_small(row, spec.keep_meta),
             })
